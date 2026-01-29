@@ -1,7 +1,7 @@
 'use client';
 
 export class ExtensionBridge {
-  private extensionId: string = 'hocnjjgmlegebjlfaejaagcmhnflmgmd';
+  private extensionId: string = 'extensionId';
   private isExtensionAvailable: boolean = false;
 
   constructor() {
