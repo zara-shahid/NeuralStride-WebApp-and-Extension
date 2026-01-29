@@ -1,4 +1,4 @@
-'use client';
+// 'use client';
 
 import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
@@ -7,13 +7,15 @@ export interface PostureMetrics {
   postureScore: number;
   cervicalAngle: number;
   isPersonDetected: boolean;
+  shoulderAlignment: number;
+  headForward: number;
 }
 
 export function useMediaPipe() {
   const [poseLandmarker, setPoseLandmarker] = useState<PoseLandmarker | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState('');
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef(0);
 
   useEffect(() => {
     initializeMediaPipe();
@@ -44,9 +46,10 @@ export function useMediaPipe() {
 
       setPoseLandmarker(landmarker);
       setIsReady(true);
+      console.log('✅ MediaPipe initialized successfully');
     } catch (err) {
       setError('Failed to initialize MediaPipe: ' + (err as Error).message);
-      console.error(err);
+      console.error('❌ MediaPipe error:', err);
     }
   };
 
@@ -59,7 +62,7 @@ export function useMediaPipe() {
     const leftHip = landmarks[23];
     const rightHip = landmarks[24];
 
-    // Average positions
+    // Average positions for more stable measurements
     const ear = {
       x: (leftEar.x + rightEar.x) / 2,
       y: (leftEar.y + rightEar.y) / 2
@@ -104,40 +107,74 @@ export function useMediaPipe() {
     return angleDeg;
   };
 
-  const calculatePostureScore = (angle: number): number => {
-  // More strict scoring based on cervical angle
-  // Ideal: 170-180 degrees (nearly straight)
-  // Good: 160-170 degrees
-  // Fair: 145-160 degrees
-  // Poor: 130-145 degrees
-  // Critical: < 130 degrees
-  
-  if (angle >= 170) {
-    // Excellent posture
-    return 100;
-  } else if (angle >= 165) {
-    // Very good - small deduction
-    return 95 - Math.round((170 - angle) * 2);
-  } else if (angle >= 160) {
-    // Good posture
-    return 85 - Math.round((165 - angle) * 2);
-  } else if (angle >= 150) {
-    // Fair posture - starting to slouch
-    return 70 - Math.round((160 - angle) * 2);
-  } else if (angle >= 140) {
-    // Poor posture - definite slouching
-    return 50 - Math.round((150 - angle) * 2);
-  } else if (angle >= 130) {
-    // Bad posture
-    return 30 - Math.round((140 - angle) * 2);
-  } else if (angle >= 120) {
-    // Very bad posture
-    return 20 - Math.round((130 - angle) * 1.5);
-  } else {
-    // Critical - extreme forward head
-    return Math.max(0, 10 - Math.round((120 - angle) * 0.5));
-  }
-};
+  const calculateShoulderAlignment = (landmarks: any[]): number => {
+    const leftShoulder = landmarks[11];
+    const rightShoulder = landmarks[12];
+    
+    // Check if shoulders are level (y-coordinates should be similar)
+    const shoulderDiff = Math.abs(leftShoulder.y - rightShoulder.y);
+    
+    // Convert to a 0-100 scale (0 = very uneven, 100 = perfectly aligned)
+    const alignment = Math.max(0, 100 - (shoulderDiff * 500));
+    
+    return Math.round(alignment);
+  };
+
+  const calculateHeadForwardDistance = (landmarks: any[]): number => {
+    const nose = landmarks[0];
+    const leftShoulder = landmarks[11];
+    const rightShoulder = landmarks[12];
+    
+    const shoulderX = (leftShoulder.x + rightShoulder.x) / 2;
+    
+    // Measure horizontal distance between nose and shoulder midpoint
+    const forwardDistance = Math.abs(nose.x - shoulderX);
+    
+    // Convert to percentage (0 = head directly above shoulders, 100 = very far forward)
+    return Math.min(100, Math.round(forwardDistance * 200));
+  };
+
+  const calculatePostureScore = (
+    cervicalAngle: number, 
+    shoulderAlignment: number,
+    headForward: number
+  ): number => {
+    // Improved scoring based on real-world posture
+    // Cervical angle contribution: 60%
+    // Shoulder alignment contribution: 20%
+    // Head forward position contribution: 20%
+    
+    let cervicalScore = 0;
+    
+    // Real-world sitting posture angles (adjusted for natural forward lean)
+    if (cervicalAngle >= 155 && cervicalAngle <= 165) {
+      cervicalScore = 100; // Ideal range
+    } else if (cervicalAngle >= 150) {
+      cervicalScore = 95 - Math.abs(cervicalAngle - 160) * 2;
+    } else if (cervicalAngle >= 145) {
+      cervicalScore = 85 - (150 - cervicalAngle) * 1.5;
+    } else if (cervicalAngle >= 135) {
+      cervicalScore = 70 - (145 - cervicalAngle) * 2;
+    } else if (cervicalAngle >= 125) {
+      cervicalScore = 50 - (135 - cervicalAngle) * 2.5;
+    } else if (cervicalAngle >= 115) {
+      cervicalScore = 25 - (125 - cervicalAngle) * 2;
+    } else {
+      cervicalScore = Math.max(0, 10 - (115 - cervicalAngle) * 0.5);
+    }
+    
+    // Penalize head being too far forward
+    const headForwardScore = Math.max(0, 100 - headForward * 1.5);
+    
+    // Combined weighted score
+    const totalScore = (
+      (cervicalScore * 0.6) + 
+      (shoulderAlignment * 0.2) + 
+      (headForwardScore * 0.2)
+    );
+    
+    return Math.round(Math.max(0, Math.min(100, totalScore)));
+  };
 
   const detectPose = (
     video: HTMLVideoElement,
@@ -157,26 +194,30 @@ export function useMediaPipe() {
         const drawingUtils = new DrawingUtils(ctx);
         
         for (const landmarks of results.landmarks) {
-          // Draw skeleton
+          // Draw skeleton with better visibility
           drawingUtils.drawLandmarks(landmarks, {
-            radius: 5,
+            radius: 6,
             color: '#00FF00',
             fillColor: '#00FF00'
           });
           drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, {
             color: '#00FFFF',
-            lineWidth: 2
+            lineWidth: 3
           });
         }
 
-        // Calculate metrics
+        // Calculate all metrics
         const cervicalAngle = calculateCervicalAngle(results.landmarks[0]);
-        const postureScore = calculatePostureScore(cervicalAngle);
+        const shoulderAlignment = calculateShoulderAlignment(results.landmarks[0]);
+        const headForward = calculateHeadForwardDistance(results.landmarks[0]);
+        const postureScore = calculatePostureScore(cervicalAngle, shoulderAlignment, headForward);
 
         return {
           postureScore: Math.round(postureScore),
           cervicalAngle: Math.round(cervicalAngle * 10) / 10,
-          isPersonDetected: true
+          isPersonDetected: true,
+          shoulderAlignment: shoulderAlignment,
+          headForward: headForward
         };
       }
     }
@@ -184,7 +225,9 @@ export function useMediaPipe() {
     return {
       postureScore: 0,
       cervicalAngle: 0,
-      isPersonDetected: false
+      isPersonDetected: false,
+      shoulderAlignment: 0,
+      headForward: 0
     };
   };
 

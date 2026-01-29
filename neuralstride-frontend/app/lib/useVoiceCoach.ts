@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 
 interface VoiceCoachSettings {
   enabled: boolean;
@@ -11,7 +11,10 @@ interface VoiceCoachSettings {
 export function useVoiceCoach(settings: VoiceCoachSettings) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const lastPostureState = useRef<'good' | 'fair' | 'poor' | null>(null);
+  const stateChangeTimeRef = useRef<number>(0);
+  const hasSpokenForStateRef = useRef(false);
   const consecutivePoorCount = useRef(0);
+  const lastSpeakTime = useRef(0);
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
 
   const getVoice = () => {
@@ -25,114 +28,130 @@ export function useVoiceCoach(settings: VoiceCoachSettings) {
     }
   };
 
-  const speak = (text: string) => {
-  if (!synth || !settings.enabled) return;
+  const speak = useCallback((text: string) => {
+    if (!synth || !settings.enabled) return;
 
-  // Cancel any ongoing speech
-  try {
-    synth.cancel();
-  } catch (e) {
-    console.log('Cancel failed, continuing...');
-  }
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  const voice = getVoice();
-  if (voice) utterance.voice = voice;
-  
-  utterance.rate = 1.0;
-  utterance.pitch = 1.0;
-  utterance.volume = 0.9;
-
-  utterance.onstart = () => {
-    setIsSpeaking(true);
-    console.log('🎤 Speaking:', text);
-  };
-
-  utterance.onend = () => {
-    setIsSpeaking(false);
-    console.log('✅ Speech ended');
-  };
-
-  utterance.onerror = (event) => {
-    setIsSpeaking(false);
-    // Ignore "interrupted" and "canceled" errors - they're normal
-    if (event.error !== 'interrupted' && event.error !== 'canceled') {
-      console.warn('Speech warning:', event.error);
+    // Prevent speaking too frequently (minimum 3 seconds between speeches)
+    const now = Date.now();
+    if (now - lastSpeakTime.current < 3000) {
+      console.log('⏸️ Skipping speech - too soon since last message');
+      return;
     }
-  };
 
-  console.log('📢 Attempting to speak:', text);
-  
-  // Small delay to ensure synthesis is ready
-  setTimeout(() => {
+    // Cancel any ongoing speech
     try {
-      synth.speak(utterance);
-    } catch (error) {
-      console.warn('Speech failed:', error);
-      setIsSpeaking(false);
+      synth.cancel();
+    } catch (e) {
+      console.log('Cancel failed, continuing...');
     }
-  }, 100);
-};
 
-  const providePostureFeedback = (postureScore: number) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = getVoice();
+    if (voice) utterance.voice = voice;
+    
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 0.9;
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      lastSpeakTime.current = Date.now();
+      console.log('🎤 Speaking:', text);
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      console.log('✅ Speech ended');
+    };
+
+    utterance.onerror = (event) => {
+      setIsSpeaking(false);
+      if (event.error !== 'interrupted' && event.error !== 'canceled') {
+        console.warn('Speech warning:', event.error);
+      }
+    };
+
+    console.log('🔢 Attempting to speak:', text);
+    
+    // Small delay to ensure synthesis is ready
+    setTimeout(() => {
+      try {
+        synth.speak(utterance);
+      } catch (error) {
+        console.warn('Speech failed:', error);
+        setIsSpeaking(false);
+      }
+    }, 100);
+  }, [synth, settings.enabled, settings.voice]);
+
+  const providePostureFeedback = useCallback((postureScore: number) => {
     if (!settings.enabled) return;
 
     let currentState: 'good' | 'fair' | 'poor';
     
-    if (postureScore >= 75) {
+    // Adjusted thresholds for more realistic feedback
+    if (postureScore >= 70) {
       currentState = 'good';
-    } else if (postureScore >= 50) {
+    } else if (postureScore >= 45) {
       currentState = 'fair';
     } else {
       currentState = 'poor';
     }
 
-    // DEBUG: Log state changes
-    console.log('Posture Score:', postureScore, '| Current State:', currentState, '| Last State:', lastPostureState.current);
+    const now = Date.now();
 
-    // IMMEDIATE feedback on state change (excluding first detection)
-    if (currentState !== lastPostureState.current && lastPostureState.current !== null) {
-      console.log('STATE CHANGED! Speaking now...');
+    // State change detected
+    if (currentState !== lastPostureState.current) {
+      console.log('📊 State change:', lastPostureState.current, '→', currentState);
+      stateChangeTimeRef.current = now;
+      hasSpokenForStateRef.current = false;
+      lastPostureState.current = currentState;
+    }
+
+    // Only speak after state has been stable for the delay period
+    const delayMap = {
+      'low': 10000,    // 10 seconds
+      'medium': 7000,  // 7 seconds
+      'high': 5000     // 5 seconds
+    };
+    
+    const requiredDelay = delayMap[settings.frequency];
+    const timeInState = now - stateChangeTimeRef.current;
+
+    if (timeInState >= requiredDelay && !hasSpokenForStateRef.current) {
+      hasSpokenForStateRef.current = true;
+      
       switch (currentState) {
         case 'poor':
           speak("Your posture is declining. Sit up straighter.");
+          consecutivePoorCount.current++;
           break;
         case 'fair':
           if (lastPostureState.current === 'poor') {
-            speak("Better! Keep improving.");
+            speak("Better! Keep improving your posture.");
           } else {
-            speak("Your posture needs adjustment.");
+            speak("Your posture needs some adjustment.");
           }
+          consecutivePoorCount.current = 0;
           break;
         case 'good':
-          if (lastPostureState.current !== 'good') {
-            speak("Excellent posture! Well done.");
-          }
+          speak("Excellent posture! Keep it up.");
+          consecutivePoorCount.current = 0;
           break;
       }
-      lastPostureState.current = currentState;
-    } else if (lastPostureState.current === null) {
-      // First time - just set the state without speaking
-      console.log('First detection - setting initial state:', currentState);
-      lastPostureState.current = currentState;
-    } else {
-      console.log('No state change - not speaking');
     }
     
-    // Additional check for very poor posture
-    if (postureScore < 35) {
-      consecutivePoorCount.current++;
-      if (consecutivePoorCount.current === 5) {
-        console.log('CRITICAL posture detected!');
+    // Emergency alert for critical posture (immediate, overrides delay)
+    if (postureScore < 30 && timeInState > 3000) {
+      if (!hasSpokenForStateRef.current || consecutivePoorCount.current >= 3) {
         speak("Critical! Your posture needs immediate correction.");
+        hasSpokenForStateRef.current = true;
         consecutivePoorCount.current = 0;
       }
-    } else {
-      consecutivePoorCount.current = 0;
     }
-  };
+  }, [settings.enabled, settings.frequency, speak]);
 
-  const provideBreakReminder = () => {
+  const provideBreakReminder = useCallback(() => {
     if (!settings.enabled) return;
     
     const messages = [
@@ -144,31 +163,43 @@ export function useVoiceCoach(settings: VoiceCoachSettings) {
     
     const randomMessage = messages[Math.floor(Math.random() * messages.length)];
     speak(randomMessage);
-  };
+  }, [settings.enabled, speak]);
 
-  const provideEncouragement = (avgScore: number) => {
+  const provideEncouragement = useCallback((avgScore: number) => {
     if (!settings.enabled) return;
 
-    if (avgScore >= 90) {
+    if (avgScore >= 85) {
       speak("Outstanding work today! Your posture has been excellent.");
-    } else if (avgScore >= 75) {
+    } else if (avgScore >= 70) {
       speak("Great job maintaining good posture. Keep up the healthy habits.");
-    } else if (avgScore >= 60) {
+    } else if (avgScore >= 55) {
       speak("You're doing well, but there's room for improvement. Stay mindful of your posture.");
+    } else {
+      speak("Your posture needs attention. Remember to sit up straight throughout the day.");
     }
-  };
+  }, [settings.enabled, speak]);
 
-  const announceSessionStart = () => {
+  const announceSessionStart = useCallback(() => {
     if (!settings.enabled) return;
-    speak("Neural stride monitoring activated. I'll help you maintain healthy posture throughout your session.");
-  };
+    speak("NeuralStride monitoring activated. I'll help you maintain healthy posture throughout your session.");
+  }, [settings.enabled, speak]);
 
-  const announceSessionEnd = (duration: number, avgScore: number) => {
+  const announceSessionEnd = useCallback((duration: number, avgScore: number) => {
     if (!settings.enabled) return;
     
     const minutes = Math.floor(duration / 60);
-    speak(`Session complete. You worked for ${minutes} minutes with an average posture score of ${Math.round(avgScore)}. Great effort!`);
-  };
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    
+    let timeString = '';
+    if (hours > 0) {
+      timeString = `${hours} hour${hours > 1 ? 's' : ''} and ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}`;
+    } else {
+      timeString = `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+    }
+    
+    speak(`Session complete. You worked for ${timeString} with an average posture score of ${Math.round(avgScore)}. Great effort!`);
+  }, [settings.enabled, speak]);
 
   return {
     isSpeaking,
