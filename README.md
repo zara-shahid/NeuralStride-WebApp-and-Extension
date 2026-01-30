@@ -189,7 +189,7 @@ npm --version
 
 #### Step 1: Clone Repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/neuralstride.git
+git clone https://github.com/zara-shahid/NeuralStride-WebApp-and-Extension.git
 cd neuralstride
 ```
 
@@ -507,12 +507,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 ## 📞 Contact
 
 ### Support
-- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/neuralstride/issues)
-- **Email**: your.email@example.com
+- **Issues**: [GitHub Issues](https://github.com/zara-shahid/NeuralStride-WebApp-and-Extension/issues)
+- **Email**: zarashahid444@gmail.com
 
 ### Follow
-- **GitHub**: [@YOUR_USERNAME](https://github.com/YOUR_USERNAME)
-- **Website**: [yourwebsite.com](https://yourwebsite.com)
+- **GitHub**: [@YOUR_USERNAME](https://github.com/zara-shahid)
+- **Website**: [yourwebsite.com](https://zarashahid.vercel.app.com)
 
 ---
 
