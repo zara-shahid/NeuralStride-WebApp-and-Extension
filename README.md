@@ -2,7 +2,6 @@
 
 **Real-time posture detection with Chrome Extension featuring a living plant that grows with good posture**
 
-![NeuralStride Banner](assets/neuralstride-thumbnail.PNG)
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
